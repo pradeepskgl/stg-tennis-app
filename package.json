@@ -1,0 +1,19 @@
+{
+  "name": "tennis-tournament-tracker",
+  "version": "1.0.0",
+  "description": "Tennis tournament bracket, scheduling and live scoring tracker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node utils/seedBracket.js",
+    "postinstall": "node utils/seedBracket.js || true"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.0",
+    "socket.io": "^4.7.5"
+  }
+}

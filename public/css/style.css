@@ -1,0 +1,116 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: #0f1a12;
+  color: #e9f0ea;
+  margin: 0;
+  padding: 0;
+}
+header {
+  background: #16241a;
+  padding: 14px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #2a3d2e;
+}
+header h1 { font-size: 18px; margin: 0; }
+main { padding: 20px; max-width: 1000px; margin: 0 auto; }
+
+button {
+  background: #2e7d32;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button:hover { background: #256428; }
+button.secondary { background: #3a4a3d; }
+button.danger { background: #8a2e2e; }
+button:disabled { background: #555; cursor: not-allowed; }
+
+input, select {
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid #3a4a3d;
+  background: #1b291e;
+  color: #e9f0ea;
+  font-size: 14px;
+}
+
+.session-block { border: 1px solid #2a3d2e; border-radius: 8px; padding: 10px; margin-bottom: 14px; }
+.session-title { font-weight: 600; color: #9fcf9f; margin-bottom: 8px; }
+
+.match-card {
+  background: #16241a;
+  border: 1px solid #2a3d2e;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.match-card:hover { border-color: #3f5a44; }
+.match-meta { font-size: 12px; color: #9fb39f; }
+.match-players { font-size: 15px; margin-top: 2px; }
+
+.badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.badge.scheduled { background: #3a4a3d; color: #cfe0d0; }
+.badge.toss_done { background: #55622a; color: #eaf1c8; }
+.badge.in_progress { background: #2e5d8a; color: #d6ecff; }
+.badge.completed { background: #6b4d1e; color: #ffe6bf; }
+
+.scoreboard {
+  background: #16241a;
+  border: 1px solid #2a3d2e;
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+.scoreboard .names { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.scoreboard .sets { font-size: 16px; font-weight: 700; color: #9fcf9f; margin-bottom: 10px; }
+.scoreboard .points { font-size: 38px; font-weight: 700; letter-spacing: 0.05em; }
+.scoreboard .server-tag { font-size: 13px; color: #ffd479; margin-top: 6px; }
+
+.switch-banner {
+  background: #55622a;
+  color: #eaf1c8;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-weight: 600;
+}
+
+.point-buttons { display: flex; gap: 12px; justify-content: center; margin: 16px 0; }
+.point-buttons button { flex: 1; max-width: 220px; padding: 14px; font-size: 15px; }
+
+.event-log {
+  background: #101a12;
+  border: 1px solid #2a3d2e;
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: #b7c9b8;
+}
+.event-log div { padding: 2px 0; }
+
+.field-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+.field-row label { font-size: 13px; color: #9fb39f; min-width: 90px; }
+
+a { color: #8fd39a; }
+.error-msg { color: #ff8f8f; font-size: 13px; margin-top: 6px; }
+.small-note { font-size: 12px; color: #7d947e; }

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Match - AO Tennis Tournament Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button class="secondary" onclick="location.href='/'">&larr; Back</button>
+    <h1><a href="/" style="color:#e9f0ea;text-decoration:none;">🏆 AO Tournament</a> / Match <span id="mNum"></span></h1>
+  </div>
+  <div id="authArea"></div>
+</header>
+<main>
+
+  <div id="lockNotice" class="error-msg"></div>
+
+  <div class="session-block">
+    <div class="session-title">Match info</div>
+    <div id="scheduleView"></div>
+    <div id="scheduleEdit" style="display:none;"></div>
+  </div>
+
+  <div class="session-block" id="tossBlock">
+    <div class="session-title">Coin toss</div>
+    <div id="tossView"></div>
+    <div id="tossForm" style="display:none;"></div>
+  </div>
+
+  <div id="switchBanner" class="switch-banner" style="display:none;"></div>
+
+  <div class="scoreboard" id="scoreboard" style="display:none;"></div>
+
+  <div id="adminControls" style="display:none;">
+    <div class="point-buttons">
+      <button onclick="addPoint('player1')">Point: <span id="p1NameBtn"></span></button>
+      <button onclick="addPoint('player2')">Point: <span id="p2NameBtn"></span></button>
+    </div>
+    <div style="text-align:center; margin-bottom:14px;">
+      <button class="secondary" onclick="undoPoint()">Undo last point</button>
+      <button class="secondary" onclick="startMatch()" id="startBtn" style="display:none;">Start Match</button>
+      <button class="danger" onclick="openFinishPanel()" id="finishBtn" style="display:none;">Mark Match Finished</button>
+    </div>
+    <div id="finishPanel" class="session-block" style="display:none;">
+      <div class="session-title">Finish this match?</div>
+      <div id="finishWinnerRow" style="display:none;" class="field-row">
+        <label>Winner</label>
+        <select id="finishWinnerSel">
+          <option value="player1"></option>
+          <option value="player2"></option>
+        </select>
+      </div>
+      <p class="small-note">This will lock the match - no further points, undos, or toss changes will be possible. Are you sure?</p>
+      <button class="danger" onclick="confirmFinish()">Yes, finish match</button>
+      <button class="secondary" onclick="closeFinishPanel()">No, cancel</button>
+      <div id="finishError" class="error-msg"></div>
+    </div>
+  </div>
+
+  <div class="session-block">
+    <div class="session-title">Event log</div>
+    <div class="event-log" id="eventLog"></div>
+  </div>
+
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/match.js"></script>
+</body>
+</html>

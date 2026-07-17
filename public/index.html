@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AO Tennis Tournament Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+  <h1>🏆 AO Tennis Tournament - July 18 &amp; 19</h1>
+  <div id="authArea" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;"></div>
+</header>
+<main>
+
+  <div id="dayTabs" style="margin-bottom: 14px;">
+    <button onclick="renderDay(1)" id="dayBtn1">Day 1 - July 18</button>
+    <button class="secondary" onclick="renderDay(2)" id="dayBtn2">Day 2 - July 19</button>
+  </div>
+
+  <div id="matchList"></div>
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+let currentDay = 1;
+let isAdmin = false;
+let setupComplete = true;
+let bracket = [];
+
+function roundIsDay1(round) {
+  return ['Play-In', 'Round of 16'].includes(round);
+}
+
+async function checkAuth() {
+  try {
+    await Api.get('/api/auth/me');
+    isAdmin = true;
+  } catch (e) {
+    isAdmin = false;
+  }
+}
+
+async function checkSetup() {
+  const status = await Api.get('/api/auth/status');
+  setupComplete = status.setupComplete;
+}
+
+function renderAuthArea() {
+  const el = document.getElementById('authArea');
+
+  if (!setupComplete) {
+    el.innerHTML = `
+      <span class="small-note">Set admin passcode:</span>
+      <input id="setupPasscode" type="password" placeholder="Min 4 chars" style="width:140px;">
+      <button onclick="doSetup()">Set Passcode</button>
+      <span id="setupError" class="error-msg"></span>
+    `;
+    return;
+  }
+
+  if (isAdmin) {
+    el.innerHTML = `
+      <span class="small-note">Admin session active</span>
+      <button class="secondary" onclick="doLogout()">Logout</button>
+    `;
+    return;
+  }
+
+  el.innerHTML = `
+    <input id="loginPasscode" type="password" placeholder="Admin passcode" style="width:140px;" onkeydown="if(event.key==='Enter') doLogin();">
+    <button onclick="doLogin()">Login</button>
+    <span id="loginError" class="error-msg"></span>
+  `;
+}
+
+async function doSetup() {
+  const passcode = document.getElementById('setupPasscode').value;
+  try {
+    await Api.post('/api/auth/setup', { passcode });
+    setupComplete = true;
+    renderAuthArea();
+  } catch (e) {
+    document.getElementById('setupError').textContent = e.message;
+  }
+}
+
+async function doLogin() {
+  const passcode = document.getElementById('loginPasscode').value;
+  try {
+    await Api.post('/api/auth/login', { passcode });
+    isAdmin = true;
+    renderAuthArea();
+  } catch (e) {
+    document.getElementById('loginError').textContent = e.message;
+  }
+}
+
+async function doLogout() {
+  await Api.post('/api/auth/logout');
+  isAdmin = false;
+  renderAuthArea();
+}
+
+async function loadBracket() {
+  bracket = await Api.get('/api/bracket');
+  renderDay(currentDay);
+}
+
+function renderDay(day) {
+  currentDay = day;
+  document.getElementById('dayBtn1').className = day === 1 ? '' : 'secondary';
+  document.getElementById('dayBtn2').className = day === 2 ? '' : 'secondary';
+
+  const matches = bracket.filter(m => (day === 1) === roundIsDay1(m.round));
+  const list = document.getElementById('matchList');
+  list.innerHTML = matches.map(m => {
+    const winnerName = m.status === 'completed' && m.score && m.score.winner ? m[m.score.winner].name : null;
+    return `
+    <div class="match-card" onclick="location.href='/match.html?m=${m.matchNumber}'">
+      <div>
+        <div class="match-meta">Match ${m.matchNumber} - ${m.round} - ${m.session} - ${m.scheduledStart} to ${m.scheduledEnd}</div>
+        <div class="match-players">${m.player1.name} vs ${m.player2.name}</div>
+        ${winnerName ? `<div class="match-meta" style="color:#ffd479;">Winner: ${winnerName} 🏆</div>` : ''}
+      </div>
+      <span class="badge ${m.status}">${m.status.replace('_',' ')}</span>
+    </div>
+  `;
+  }).join('') || '<p class="small-note">No matches yet - run the seed script.</p>';
+}
+
+(async function init() {
+  await checkAuth();
+  await checkSetup();
+  renderAuthArea();
+  await loadBracket();
+})();
+</script>
+</body>
+</html>
