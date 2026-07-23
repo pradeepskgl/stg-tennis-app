@@ -38,7 +38,8 @@ const coinTossSchema = new mongoose.Schema({
 }, { _id: false });
 
 const matchSchema = new mongoose.Schema({
-  matchNumber: { type: Number, required: true, unique: true },
+  tournamentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tournament', required: true, index: true },
+  matchNumber: { type: Number, required: true },
   round: { type: String, required: true }, // "Play-In" | "Round of 16" | "Quarterfinal" | "Semifinal" | "Final"
   phase: { type: Number, enum: [1, 2], required: true }, // 1 = Fast4, 2 = Regular
   session: { type: String, default: '' }, // "Morning" | "Evening"
@@ -78,6 +79,15 @@ const matchSchema = new mongoose.Schema({
 
   switchPacing: { type: String, enum: ['odd_game', 'every_two_games'], default: 'odd_game' },
 
+  // Copied from the tournament's config at seed time, so the scoring engine
+  // can read it per-match without an extra lookup.
+  decidingSet: { type: String, enum: ['match_tiebreak', 'full_set'], default: 'match_tiebreak' },
+
+  // Actual wall-clock timer, separate from the editable scheduledStart/scheduledEnd
+  // display strings. Set automatically when the match is started/completed.
+  actualStart: { type: Date, default: null },
+  actualEnd: { type: Date, default: null },
+
   lock: {
     sessionId: { type: String, default: null },
     lockedAt: { type: Date, default: null }
@@ -85,5 +95,7 @@ const matchSchema = new mongoose.Schema({
 
   version: { type: Number, default: 0 }
 }, { timestamps: true });
+
+matchSchema.index({ tournamentId: 1, matchNumber: 1 }, { unique: true });
 
 module.exports = mongoose.model('Match', matchSchema);

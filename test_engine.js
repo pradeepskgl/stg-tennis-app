@@ -1,10 +1,10 @@
 const { newMatchScore, addPoint } = require('./utils/rulesEngine');
 
-function play(phase, sequence, pacing = 'odd_game') {
+function play(phase, sequence, pacing = 'odd_game', decidingSet = 'match_tiebreak') {
   let score = newMatchScore('player1');
   let log = [];
   for (const scorer of sequence) {
-    const r = addPoint(score, phase, scorer, pacing);
+    const r = addPoint(score, phase, scorer, pacing, decidingSet);
     score = r.score;
     if (r.switchSuggestion) log.push('SWITCH: ' + r.switchSuggestion);
     log.push(...r.events);
@@ -113,6 +113,29 @@ check('Set 1 won via tiebreak (1-0) starts Set 2, no premature match tiebreak',
   r9.score.sets.length === 2 && r9.score.currentSetIndex === 1 &&
   r9.score.inMatchTiebreak === false && r9.score.winner === null &&
   r9.score.sets[0].wonBy === 'player1');
+
+// Test 10 (new feature): decidingSet='full_set' - sets 1-1 plays a real 3rd set, not a match tiebreak
+seq = [];
+for (let g = 0; g < 4; g++) seq.push(...winGame('player1')); // set1 p1 4-0
+for (let g = 0; g < 4; g++) seq.push(...winGame('player2')); // set2 p2 4-0
+let r10setup = play(1, seq, 'odd_game', 'full_set');
+check('full_set: sets 1-1 starts a 3rd set instead of match tiebreak',
+  r10setup.score.sets.length === 3 && r10setup.score.currentSetIndex === 2 &&
+  r10setup.score.inMatchTiebreak === false && r10setup.score.winner === null);
+
+// Test 11: full_set - winning the 3rd set wins the match (best of 3 realized)
+let seq11 = seq.slice();
+for (let g = 0; g < 4; g++) seq11.push(...winGame('player1')); // 3rd set p1 4-0
+let r11 = play(1, seq11, 'odd_game', 'full_set');
+check('full_set: winning the 3rd set wins the match',
+  r11.score.winner === 'player1' && r11.score.sets.length === 3 && r11.score.sets[2].wonBy === 'player1');
+
+// Test 12: full_set still uses match tiebreak default behavior when NOT specified (backward compatibility)
+seq = [];
+for (let g = 0; g < 4; g++) seq.push(...winGame('player1'));
+for (let g = 0; g < 4; g++) seq.push(...winGame('player2'));
+let r12 = play(1, seq); // decidingSet defaults to 'match_tiebreak'
+check('default decidingSet still triggers match tiebreak at 1-1', r12.score.inMatchTiebreak === true);
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,14 +1,69 @@
 const params = new URLSearchParams(location.search);
 const matchNumber = Number(params.get('m'));
+const tournamentId = params.get('t');
 document.getElementById('mNum').textContent = matchNumber;
+
+const API_BASE = `/api/tournaments/${tournamentId}/matches`;
 
 let match = null;
 let isAdmin = false;
+let isArchived = false;
 let socket = null;
 let lockHeartbeat = null;
 let tossState = { tossWinner: null, winnerChoice: null, deferPick: null };
 
 const other = p => p === 'player1' ? 'player2' : 'player1';
+
+function goBack() {
+  location.href = `/?t=${tournamentId}`;
+}
+
+async function checkTournamentStatus() {
+  try {
+    const t = await Api.get(`/api/tournaments/${tournamentId}`);
+    isArchived = t.status === 'archived';
+    document.getElementById('archivedBanner').style.display = isArchived ? 'block' : 'none';
+  } catch (e) {
+    isArchived = false;
+  }
+}
+
+function formatDuration(ms) {
+  if (ms < 0) ms = 0;
+  const totalSeconds = Math.floor(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function renderTimer() {
+  const block = document.getElementById('timerBlock');
+  const display = document.getElementById('timerDisplay');
+  if (!match || !match.actualStart) {
+    block.style.display = 'none';
+    return;
+  }
+  block.style.display = 'block';
+  const start = new Date(match.actualStart).getTime();
+  const end = match.actualEnd ? new Date(match.actualEnd).getTime() : Date.now();
+  const elapsedMs = end - start;
+  const windowMinutes = match.phase === 1 ? 45 : 90;
+  const windowMs = windowMinutes * 60 * 1000;
+  const isOver = elapsedMs > windowMs;
+  const label = match.status === 'completed' ? 'Duration' : 'Elapsed';
+  display.innerHTML = `${label}: <b>${formatDuration(elapsedMs)}</b> &nbsp; <span class="small-note">(scheduled window: ${windowMinutes} min)</span>` +
+    (isOver ? ' <span style="color:#ff8f8f;">Over scheduled time</span>' : '');
+}
+
+let timerInterval = null;
+function startTimerTicker() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    if (match && match.status === 'in_progress') renderTimer();
+  }, 1000);
+}
 
 function pointLabel(count, otherCount, noAd) {
   const labels = ['0', '15', '30', '40'];
@@ -43,16 +98,16 @@ async function checkAuth() {
 }
 
 async function loadMatch() {
-  const data = await Api.get(`/api/matches/${matchNumber}`);
+  const data = await Api.get(`${API_BASE}/${matchNumber}`);
   match = data;
   render();
 }
 
 function connectSocket() {
   socket = io();
-  socket.emit('join:match', matchNumber);
+  socket.emit('join:match', { tournamentId, matchNumber });
   socket.on('match:update', (updated) => {
-    if (updated.matchNumber === matchNumber) {
+    if (updated.matchNumber === matchNumber && updated.tournamentId === tournamentId) {
       match = updated;
       render();
     }
@@ -60,22 +115,23 @@ function connectSocket() {
 }
 
 async function acquireLockIfAdmin() {
-  if (!isAdmin) return;
+  if (!isAdmin || isArchived) return;
   try {
-    await Api.post(`/api/matches/${matchNumber}/lock`);
+    await Api.post(`${API_BASE}/${matchNumber}/lock`);
     document.getElementById('lockNotice').textContent = '';
     document.getElementById('adminControls').style.display = match.status === 'in_progress' || match.status === 'completed' ? 'block' : 'none';
     lockHeartbeat = setInterval(() => {
-      Api.post(`/api/matches/${matchNumber}/lock/refresh`).catch(() => {});
+      Api.post(`${API_BASE}/${matchNumber}/lock/refresh`).catch(() => {});
     }, 60000);
   } catch (e) {
     document.getElementById('lockNotice').textContent = e.message;
   }
 }
 
+
 window.addEventListener('beforeunload', () => {
   if (isAdmin) {
-    navigator.sendBeacon && navigator.sendBeacon(`/api/matches/${matchNumber}/lock`, '');
+    navigator.sendBeacon && navigator.sendBeacon(`${API_BASE}/${matchNumber}/lock`, '');
   }
 });
 
@@ -86,8 +142,8 @@ function renderSchedule() {
   view.innerHTML = `
     <div class="match-meta">${match.round} - ${match.session} - ${match.scheduledStart} to ${match.scheduledEnd}</div>
     <div class="match-players">${match.player1.name} vs ${match.player2.name}</div>
-    <div class="small-note">Phase ${match.phase === 1 ? '1 (Fast4)' : '2 (Regular)'} · Switch pacing: ${match.switchPacing.replace('_', ' ')}</div>
-    ${isAdmin ? '<button class="secondary" onclick="toggleScheduleEdit()">Edit</button>' : ''}
+    <div class="small-note">Phase ${match.phase === 1 ? '1 (Fast4)' : '2 (Regular)'} · Switch pacing: ${match.switchPacing.replace('_', ' ')} · If 1-1: ${match.decidingSet === 'full_set' ? 'full 3rd set' : '10-point match tiebreak'}</div>
+    ${isAdmin && !isArchived ? '<button class="secondary" onclick="toggleScheduleEdit()">Edit</button>' : ''}
   `;
 
   const edit = document.getElementById('scheduleEdit');
@@ -125,7 +181,7 @@ async function saveSchedule() {
     };
     const pacingEl = document.getElementById('pacingInput');
     if (pacingEl) body.switchPacing = pacingEl.value;
-    const res = await Api.patch(`/api/matches/${matchNumber}/schedule`, body);
+    const res = await Api.patch(`${API_BASE}/${matchNumber}/schedule`, body);
     match = res.match;
     toggleScheduleEdit();
     render();
@@ -146,13 +202,13 @@ function renderToss() {
       <div>Toss winner: <b>${match[ct.tossWinner].name}</b> chose to <b>${ct.winnerChoice}</b>${ct.winnerChoice === 'defer' ? ' (passed first choice to opponent)' : ''}.</div>
       <div>${match[ct.serveChoice.player].name} will <b>${ct.serveChoice.decision}</b> first.</div>
       <div>${match[ct.sideChoice.player].name} starts on the <b>${ct.sideChoice.side}</b>.</div>
-      ${isAdmin && match.status === 'toss_done' ? '<button onclick="toggleTossForm()">Re-record toss</button>' : ''}
+      ${isAdmin && !isArchived && match.status === 'toss_done' ? '<button onclick="toggleTossForm()">Re-record toss</button>' : ''}
     `;
   } else {
     view.innerHTML = '<span class="small-note">Not recorded yet.</span>';
   }
 
-  if (isAdmin && (match.status === 'scheduled' || match.status === 'toss_done')) {
+  if (isAdmin && !isArchived && (match.status === 'scheduled' || match.status === 'toss_done')) {
     form.style.display = match.status === 'scheduled' ? 'block' : 'none';
     renderTossForm();
   } else {
@@ -270,7 +326,7 @@ async function saveToss() {
   const sideChoicePlayer = pick === 'side' ? chooser : other(chooser);
 
   try {
-    const res = await Api.post(`/api/matches/${matchNumber}/toss`, {
+    const res = await Api.post(`${API_BASE}/${matchNumber}/toss`, {
       tossWinner: tossState.tossWinner,
       winnerChoice: tossState.winnerChoice,
       serveChoicePlayer,
@@ -347,7 +403,7 @@ function renderAdminControls() {
   const controls = document.getElementById('adminControls');
   const startBtn = document.getElementById('startBtn');
   const finishBtn = document.getElementById('finishBtn');
-  if (!isAdmin) { controls.style.display = 'none'; return; }
+  if (!isAdmin || isArchived) { controls.style.display = 'none'; return; }
 
   document.getElementById('p1NameBtn').textContent = match.player1.name;
   document.getElementById('p2NameBtn').textContent = match.player2.name;
@@ -395,7 +451,7 @@ async function confirmFinish() {
     if (!match.score.winner) {
       body.winner = document.getElementById('finishWinnerSel').value;
     }
-    const res = await Api.post(`/api/matches/${matchNumber}/finish`, body);
+    const res = await Api.post(`${API_BASE}/${matchNumber}/finish`, body);
     match = res.match;
     closeFinishPanel();
     logEvent('Match marked as finished.');
@@ -407,7 +463,7 @@ async function confirmFinish() {
 
 async function startMatch() {
   try {
-    const res = await Api.post(`/api/matches/${matchNumber}/start`);
+    const res = await Api.post(`${API_BASE}/${matchNumber}/start`);
     match = res.match;
     render();
   } catch (e) {
@@ -417,7 +473,7 @@ async function startMatch() {
 
 async function addPoint(scorer) {
   try {
-    const res = await Api.post(`/api/matches/${matchNumber}/point`, { scorer, expectedVersion: match.version });
+    const res = await Api.post(`${API_BASE}/${matchNumber}/point`, { scorer, expectedVersion: match.version });
     match = res.match;
     (res.events || []).forEach(logEvent);
     const banner = document.getElementById('switchBanner');
@@ -435,7 +491,7 @@ async function addPoint(scorer) {
 
 async function undoPoint() {
   try {
-    const res = await Api.post(`/api/matches/${matchNumber}/undo`);
+    const res = await Api.post(`${API_BASE}/${matchNumber}/undo`);
     match = res.match;
     logEvent('Last point undone.');
     document.getElementById('switchBanner').style.display = 'none';
@@ -457,13 +513,16 @@ function logEvent(text) {
 function render() {
   renderSchedule();
   renderToss();
+  renderTimer();
   renderScoreboard();
   renderAdminControls();
 }
 
 (async function init() {
   await checkAuth();
+  await checkTournamentStatus();
   await loadMatch();
   connectSocket();
   await acquireLockIfAdmin();
+  startTimerTicker();
 })();

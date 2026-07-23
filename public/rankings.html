@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rankings - AO Tennis Tournament Tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button class="secondary" onclick="goBack()">&larr; Back</button>
+    <h1><a href="/" style="color:#e9f0ea;text-decoration:none;">🏆 AO Tournament</a> / Rankings</h1>
+  </div>
+  <div id="authArea"></div>
+</header>
+<main>
+
+  <div class="session-block">
+    <div class="session-title" id="tournamentName">Tournament</div>
+    <p class="small-note">Ranked by furthest round reached, then game differential as a tiebreaker.</p>
+    <div id="adminRankingControls" style="display:none;">
+      <button onclick="recompute()">Recompute from matches</button>
+      <button class="secondary" onclick="saveRankings()">Save edits</button>
+      <span id="rankingActionMsg" class="small-note"></span>
+    </div>
+  </div>
+
+  <div id="noRankingMsg" class="session-block" style="display:none;">
+    <p class="small-note">No rankings have been computed for this tournament yet.</p>
+  </div>
+
+  <table id="rankingTable" style="width:100%; border-collapse:collapse; display:none;">
+    <thead>
+      <tr style="text-align:left; border-bottom:1px solid #2a3d2e;">
+        <th style="padding:8px;">Rank</th>
+        <th style="padding:8px;">Player</th>
+        <th style="padding:8px;">Furthest Round</th>
+        <th style="padding:8px;">Games Won</th>
+        <th style="padding:8px;">Games Lost</th>
+        <th style="padding:8px;">Diff</th>
+        <th style="padding:8px;">Note</th>
+      </tr>
+    </thead>
+    <tbody id="rankingBody"></tbody>
+  </table>
+
+</main>
+
+<script src="/js/api.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const tournamentId = params.get('t');
+let isAdmin = false;
+let entries = [];
+
+function goBack() {
+  location.href = `/?t=${tournamentId}`;
+}
+
+async function checkAuth() {
+  try {
+    await Api.get('/api/auth/me');
+    isAdmin = true;
+  } catch (e) {
+    isAdmin = false;
+  }
+  document.getElementById('authArea').innerHTML = isAdmin
+    ? '<span class="small-note">Admin session active</span>'
+    : '<span class="small-note">Viewing as spectator</span>';
+  document.getElementById('adminRankingControls').style.display = isAdmin ? 'block' : 'none';
+}
+
+async function loadTournamentName() {
+  try {
+    const t = await Api.get(`/api/tournaments/${tournamentId}`);
+    document.getElementById('tournamentName').textContent = t.name + (t.status === 'archived' ? ' (archived)' : '');
+  } catch (e) {
+    document.getElementById('tournamentName').textContent = 'Tournament';
+  }
+}
+
+async function loadRankings() {
+  const ranking = await Api.get(`/api/tournaments/${tournamentId}/rankings`);
+  entries = ranking ? ranking.entries : [];
+  render();
+}
+
+async function recompute() {
+  try {
+    const res = await Api.post(`/api/tournaments/${tournamentId}/rankings/compute`);
+    entries = res.ranking.entries;
+    document.getElementById('rankingActionMsg').textContent = 'Recomputed from current match data.';
+    render();
+  } catch (e) {
+    document.getElementById('rankingActionMsg').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function saveRankings() {
+  // Pull any edited note fields from the table before saving.
+  entries.forEach((e, i) => {
+    const el = document.getElementById(`note-${i}`);
+    if (el) e.note = el.value;
+  });
+  try {
+    await Api.post(`/api/tournaments/${tournamentId}/rankings`, { entries });
+    document.getElementById('rankingActionMsg').textContent = 'Saved.';
+  } catch (e) {
+    document.getElementById('rankingActionMsg').textContent = 'Error: ' + e.message;
+  }
+}
+
+function render() {
+  const table = document.getElementById('rankingTable');
+  const noMsg = document.getElementById('noRankingMsg');
+  if (!entries || entries.length === 0) {
+    table.style.display = 'none';
+    noMsg.style.display = 'block';
+    return;
+  }
+  noMsg.style.display = 'none';
+  table.style.display = 'table';
+
+  document.getElementById('rankingBody').innerHTML = entries.map((e, i) => `
+    <tr style="border-bottom:1px solid #1b291e;">
+      <td style="padding:8px; font-weight:700;">${e.rank}</td>
+      <td style="padding:8px;">${e.playerName}</td>
+      <td style="padding:8px;">${e.furthestRound}</td>
+      <td style="padding:8px;">${e.gamesWon}</td>
+      <td style="padding:8px;">${e.gamesLost}</td>
+      <td style="padding:8px;">${e.gameDiff > 0 ? '+' : ''}${e.gameDiff}</td>
+      <td style="padding:8px;">
+        ${isAdmin
+          ? `<input id="note-${i}" value="${(e.note || '').replace(/"/g, '&quot;')}" style="width:100%;">`
+          : (e.note || '')}
+      </td>
+    </tr>
+  `).join('');
+}
+
+(async function init() {
+  await checkAuth();
+  await loadTournamentName();
+  await loadRankings();
+})();
+</script>
+</body>
+</html>

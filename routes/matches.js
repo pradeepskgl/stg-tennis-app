@@ -1,9 +1,10 @@
 const express = require('express');
 const Match = require('../models/Match');
+const Tournament = require('../models/Tournament');
 const { requireAuth } = require('../middleware/auth');
 const rulesEngine = require('../utils/rulesEngine');
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
 const LOCK_TTL_MS = parseFloat(process.env.LOCK_TTL_SECONDS || '90') * 1000;
 
 function lockIsActive(match) {
@@ -11,8 +12,6 @@ function lockIsActive(match) {
     (Date.now() - new Date(match.lock.lockedAt).getTime()) < LOCK_TTL_MS;
 }
 
-// Middleware: ensures the current session either holds the lock, or no one does.
-// Attach after requireAuth. Assumes req.match has already been loaded.
 function requireLockOwnership(req, res, next) {
   const match = req.match;
   if (lockIsActive(match) && match.lock.sessionId !== req.sessionId) {
@@ -25,15 +24,26 @@ function requireLockOwnership(req, res, next) {
 }
 
 async function loadMatch(req, res, next) {
-  const match = await Match.findOne({ matchNumber: Number(req.params.matchNumber) });
+  const match = await Match.findOne({ tournamentId: req.params.tournamentId, matchNumber: Number(req.params.matchNumber) });
   if (!match) return res.status(404).json({ error: 'Match not found.' });
   req.match = match;
   next();
 }
 
+// Archived tournaments (i.e. not the currently active one) are permanently
+// read-only, so past results can never be altered once a new tournament starts.
+async function requireActiveTournament(req, res, next) {
+  const tournament = await Tournament.findById(req.params.tournamentId);
+  if (!tournament) return res.status(404).json({ error: 'Tournament not found.' });
+  if (tournament.status !== 'active') {
+    return res.status(403).json({ error: 'This tournament has been archived and is read-only. Start a new tournament to record new results.' });
+  }
+  next();
+}
+
 function broadcast(io, match) {
-  io.to(`match:${match.matchNumber}`).emit('match:update', match.toObject());
-  io.to('bracket').emit('bracket:update', { matchNumber: match.matchNumber });
+  io.to(`match:${match.tournamentId}:${match.matchNumber}`).emit('match:update', match.toObject());
+  io.to(`bracket:${match.tournamentId}`).emit('bracket:update', { matchNumber: match.matchNumber });
 }
 
 // ---- Public read endpoints ----
@@ -42,9 +52,9 @@ router.get('/:matchNumber', loadMatch, (req, res) => {
   res.json(req.match);
 });
 
-// ---- Lock endpoints (auth required) ----
+// ---- Lock endpoints (auth + active tournament required) ----
 
-router.post('/:matchNumber/lock', requireAuth, loadMatch, async (req, res) => {
+router.post('/:matchNumber/lock', requireAuth, requireActiveTournament, loadMatch, async (req, res) => {
   const match = req.match;
   if (lockIsActive(match) && match.lock.sessionId !== req.sessionId) {
     return res.status(423).json({ error: 'Already locked by another session.' });
@@ -54,8 +64,7 @@ router.post('/:matchNumber/lock', requireAuth, loadMatch, async (req, res) => {
   res.json({ ok: true, lock: match.lock });
 });
 
-// Heartbeat to refresh an existing lock
-router.post('/:matchNumber/lock/refresh', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.post('/:matchNumber/lock/refresh', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   match.lock = { sessionId: req.sessionId, lockedAt: new Date() };
   await match.save();
@@ -71,9 +80,9 @@ router.delete('/:matchNumber/lock', requireAuth, loadMatch, async (req, res) => 
   res.json({ ok: true });
 });
 
-// ---- Schedule / player-name editing (auth + lock ownership) ----
+// ---- Schedule / player-name editing ----
 
-router.patch('/:matchNumber/schedule', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.patch('/:matchNumber/schedule', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   const { player1Name, player2Name, scheduledStart, scheduledEnd, switchPacing, expectedVersion } = req.body;
 
@@ -93,16 +102,15 @@ router.patch('/:matchNumber/schedule', requireAuth, loadMatch, requireLockOwners
   res.json({ ok: true, match });
 });
 
-// ---- Coin toss (auth + lock ownership) ----
+// ---- Coin toss ----
 
-router.post('/:matchNumber/toss', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.post('/:matchNumber/toss', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   const { tossWinner, winnerChoice, serveChoicePlayer, serveDecision, sideChoicePlayer, side, expectedVersion } = req.body;
 
   if (typeof expectedVersion === 'number' && expectedVersion !== match.version) {
     return res.status(409).json({ error: 'Match was updated elsewhere. Please reload.', match });
   }
-
   if (!['player1', 'player2'].includes(tossWinner)) {
     return res.status(400).json({ error: 'tossWinner must be player1 or player2.' });
   }
@@ -124,9 +132,9 @@ router.post('/:matchNumber/toss', requireAuth, loadMatch, requireLockOwnership, 
   res.json({ ok: true, match });
 });
 
-// ---- Start match: locks in first server from toss, moves to in_progress ----
+// ---- Start match ----
 
-router.post('/:matchNumber/start', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.post('/:matchNumber/start', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   if (!match.coinToss || !match.coinToss.serveChoice || !match.coinToss.serveChoice.decision) {
     return res.status(400).json({ error: 'Coin toss must be fully recorded before starting the match.' });
@@ -138,6 +146,8 @@ router.post('/:matchNumber/start', requireAuth, loadMatch, requireLockOwnership,
   match.score = rulesEngine.newMatchScore(server);
   match.status = 'in_progress';
   match.history = [];
+  match.actualStart = new Date();
+  match.actualEnd = null;
   match.version += 1;
   await match.save();
   broadcast(req.app.get('io'), match);
@@ -146,7 +156,7 @@ router.post('/:matchNumber/start', requireAuth, loadMatch, requireLockOwnership,
 
 // ---- Scoring: add a point ----
 
-router.post('/:matchNumber/point', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.post('/:matchNumber/point', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   const { scorer, expectedVersion } = req.body;
 
@@ -160,7 +170,6 @@ router.post('/:matchNumber/point', requireAuth, loadMatch, requireLockOwnership,
     return res.status(400).json({ error: 'Match is not in progress (record the coin toss and start the match first).' });
   }
 
-  // Push a snapshot for undo, capped at 50 entries
   match.history.push(JSON.parse(JSON.stringify(match.score)));
   if (match.history.length > 50) match.history.shift();
 
@@ -168,12 +177,14 @@ router.post('/:matchNumber/point', requireAuth, loadMatch, requireLockOwnership,
     match.score.toObject ? match.score.toObject() : match.score,
     match.phase,
     scorer,
-    match.switchPacing
+    match.switchPacing,
+    match.decidingSet
   );
 
   match.score = score;
   if (score.winner) {
     match.status = 'completed';
+    match.actualEnd = new Date();
     await propagateWinner(match);
   }
   match.version += 1;
@@ -184,34 +195,26 @@ router.post('/:matchNumber/point', requireAuth, loadMatch, requireLockOwnership,
 
 // ---- Undo last point ----
 
-router.post('/:matchNumber/undo', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.post('/:matchNumber/undo', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   if (!match.history || match.history.length === 0) {
     return res.status(400).json({ error: 'No previous point to undo.' });
   }
   const previous = match.history.pop();
   match.score = previous;
-  if (match.status === 'completed') match.status = 'in_progress';
+  if (match.status === 'completed') {
+    match.status = 'in_progress';
+    match.actualEnd = null;
+  }
   match.version += 1;
   await match.save();
   broadcast(req.app.get('io'), match);
   res.json({ ok: true, match });
 });
 
-// When a match completes, push the winner's name into the next match's slot.
-async function propagateWinner(match) {
-  if (!match.nextMatch || !match.nextMatchSlot) return;
-  const winnerName = match.score.winner === 'player1' ? match.player1.name : match.player2.name;
-  const nextMatch = await Match.findOne({ matchNumber: match.nextMatch });
-  if (!nextMatch) return;
-  nextMatch[match.nextMatchSlot].name = winnerName;
-  nextMatch.version += 1;
-  await nextMatch.save();
-}
+// ---- Manually finish a match (e.g. retirement/walkover) ----
 
-// ---- Manually finish a match (e.g. retirement/walkover), locking it from further scoring ----
-
-router.post('/:matchNumber/finish', requireAuth, loadMatch, requireLockOwnership, async (req, res) => {
+router.post('/:matchNumber/finish', requireAuth, requireActiveTournament, loadMatch, requireLockOwnership, async (req, res) => {
   const match = req.match;
   const { winner, expectedVersion } = req.body;
 
@@ -233,11 +236,23 @@ router.post('/:matchNumber/finish', requireAuth, loadMatch, requireLockOwnership
   }
 
   match.status = 'completed';
+  match.actualEnd = new Date();
   match.version += 1;
   await match.save();
   await propagateWinner(match);
   broadcast(req.app.get('io'), match);
   res.json({ ok: true, match });
 });
+
+// When a match completes, push the winner's name into the next match's slot (same tournament).
+async function propagateWinner(match) {
+  if (!match.nextMatch || !match.nextMatchSlot) return;
+  const winnerName = match.score.winner === 'player1' ? match.player1.name : match.player2.name;
+  const nextMatch = await Match.findOne({ tournamentId: match.tournamentId, matchNumber: match.nextMatch });
+  if (!nextMatch) return;
+  nextMatch[match.nextMatchSlot].name = winnerName;
+  nextMatch.version += 1;
+  await nextMatch.save();
+}
 
 module.exports = router;

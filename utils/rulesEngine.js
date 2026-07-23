@@ -2,15 +2,15 @@
  * Pure scoring engine for the tournament. No DB / Express dependencies here,
  * so it can be unit-tested in isolation.
  *
- * Phase 1 (Fast4): Play-In, Round of 16, Quarterfinals
- *   - No-Ad game scoring, first to 4 games wins set, no win-by-2 on games
- *   - Set reaches 3-3 -> 5-point sudden-death set tiebreak
- *   - Sets split 1-1 -> 10-point match tiebreak (win by 2), no 3rd set
+ * Set format (chosen per-tournament, applies to every match):
+ *   Fast4 (phase 1): No-Ad game scoring, first to 4 games wins set, no win-by-2 on games;
+ *     set reaches 3-3 -> 5-point sudden-death set tiebreak.
+ *   Regular (phase 2): Ad-scoring, first to 6 games + win-by-2 wins set;
+ *     set reaches 6-6 -> standard 7-point set tiebreak (win by 2).
  *
- * Phase 2 (Regular): Semifinals, Final
- *   - Ad-scoring, first to 6 games + win-by-2 wins set
- *   - Set reaches 6-6 -> standard 7-point set tiebreak (win by 2)
- *   - Sets split 1-1 -> 10-point match tiebreak (win by 2), no 3rd set
+ * Deciding-set rule (chosen per-tournament, applies whenever sets reach 1-1):
+ *   'match_tiebreak' (default): play a 10-point match tiebreak instead of a 3rd set.
+ *   'full_set': play a real 3rd set using the same set format above; winner takes the match.
  */
 
 const other = (p) => (p === 'player1' ? 'player2' : 'player1');
@@ -76,8 +76,11 @@ function pointLabel(count, otherCount, noAd) {
  * @param {number} phase - 1 (Fast4) or 2 (Regular)
  * @param {string} scorer - 'player1' | 'player2'
  * @param {string} switchPacing - 'odd_game' | 'every_two_games' (Fast4 only; Regular always odd_game)
+ * @param {string} decidingSet - 'match_tiebreak' (default, sets 1-1 -> 10pt breaker) or
+ *   'full_set' (sets 1-1 -> play a real 3rd set instead)
  */
-function addPoint(score, phase, scorer, switchPacing) {
+function addPoint(score, phase, scorer, switchPacing, decidingSet) {
+  decidingSet = decidingSet || 'match_tiebreak';
   const s = JSON.parse(JSON.stringify(score)); // deep clone, never mutate caller's object
   const events = [];
   let switchSuggestion = null;
@@ -147,17 +150,18 @@ function addPoint(score, phase, scorer, switchPacing) {
       if (setsWonP1 === 2 || setsWonP2 === 2) {
         s.winner = setsWonP1 === 2 ? 'player1' : 'player2';
         events.push(`${s.winner} wins the match!`);
-      } else if (setsWonP1 === 1 && setsWonP2 === 1) {
+      } else if (setsWonP1 === 1 && setsWonP2 === 1 && decidingSet === 'match_tiebreak') {
         // Sets are 1-1: go straight to a 10-point match tiebreak, no 3rd set.
         s.inMatchTiebreak = true;
         s.matchTiebreak = { p1: 0, p2: 0, firstServer: other(tb.firstServer), target: 10, suddenDeath: false };
         events.push('Sets tied 1-1: playing a 10-point match tiebreak instead of a 3rd set.');
       } else {
-        // Only one set has been decided so far (e.g. 1-0) - start the next set.
+        // Either only one set decided so far (e.g. 1-0), or sets are 1-1 but
+        // this tournament plays a real 3rd (deciding) set instead of a tiebreak.
         s.currentSetIndex += 1;
         s.sets.push(freshSet());
         s.game = freshGame(other(tb.firstServer));
-        events.push('Starting the next set.');
+        events.push(setsWonP1 === 1 && setsWonP2 === 1 ? 'Sets tied 1-1: playing a 3rd (deciding) set.' : 'Starting the next set.');
       }
     }
     return { score: s, events, switchSuggestion };
@@ -245,14 +249,15 @@ function addPoint(score, phase, scorer, switchPacing) {
     if (setsWonP1 === 2 || setsWonP2 === 2) {
       s.winner = setsWonP1 === 2 ? 'player1' : 'player2';
       events.push(`${s.winner} wins the match!`);
-    } else if (setsWonP1 === 1 && setsWonP2 === 1) {
+    } else if (setsWonP1 === 1 && setsWonP2 === 1 && decidingSet === 'match_tiebreak') {
       s.inMatchTiebreak = true;
       s.matchTiebreak = { p1: 0, p2: 0, firstServer: s.game.server, target: 10, suddenDeath: false };
       events.push('Sets tied 1-1: playing a 10-point match tiebreak instead of a 3rd set.');
     } else {
-      // Start next set
+      // Start next set (either 1-0 so far, or 1-1 with a real 3rd set in play)
       s.currentSetIndex += 1;
       s.sets.push(freshSet());
+      if (setsWonP1 === 1 && setsWonP2 === 1) events.push('Sets tied 1-1: playing a 3rd (deciding) set.');
     }
   }
 

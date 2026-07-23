@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "seed": "node utils/seedBracket.js",
+    "migrate-legacy": "node utils/migrateLegacyData.js",
     "postinstall": "node utils/seedBracket.js || true"
   },
   "dependencies": {

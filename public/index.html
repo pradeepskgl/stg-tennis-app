@@ -8,14 +8,53 @@
 </head>
 <body>
 <header>
-  <h1>🏆 AO Tennis Tournament - July 18 &amp; 19</h1>
+  <h1>🏆 AO Tennis Tournament</h1>
   <div id="authArea" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;"></div>
 </header>
 <main>
 
+  <div class="session-block">
+    <div class="field-row">
+      <label>Tournament</label>
+      <select id="tournamentSelect" onchange="onTournamentChange()"></select>
+      <a id="rankingsLink" href="#">View rankings</a>
+      <button class="secondary" onclick="exportTournament()">Export</button>
+      <button id="importBtn" class="secondary" style="display:none;" onclick="document.getElementById('importFileInput').click()">Import</button>
+      <input type="file" id="importFileInput" accept="application/json" style="display:none;" onchange="importTournament(event)">
+      <button id="newTournamentBtn" class="secondary" style="display:none;" onclick="toggleNewTournamentForm()">+ New Tournament</button>
+    </div>
+    <div id="importMsg" class="small-note"></div>
+    <div id="newTournamentForm" style="display:none;">
+      <div class="field-row"><label>Name</label><input id="newTournamentName" placeholder="e.g. AO Tennis Tournament - Aug 2026"></div>
+      <div class="field-row"><label>Dates</label><input id="newTournamentDates" placeholder="e.g. August 15 & 16"></div>
+      <div class="field-row">
+        <label>Match format</label>
+        <select id="newTournamentSetFormat">
+          <option value="fast4">Fast4 (No-Ad, first to 4 games, 5pt sudden-death tiebreak at 3-3)</option>
+          <option value="regular">Regular (Ad scoring, first to 6 games win-by-2, 7pt tiebreak at 6-6)</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <label>If sets tie 1-1</label>
+        <select id="newTournamentDecidingSet">
+          <option value="match_tiebreak">Play a 10-Point Match Tiebreak (no 3rd set)</option>
+          <option value="full_set">Play a full 3rd (deciding) set</option>
+        </select>
+      </div>
+      <p class="small-note">This applies to every match in the new tournament. This archives the current tournament (its data is kept and stays viewable) and creates a fresh 17-match bracket with all players TBD, ready to edit.</p>
+      <button onclick="createTournament()">Create &amp; Switch</button>
+      <button class="secondary" onclick="toggleNewTournamentForm()">Cancel</button>
+      <div id="newTournamentError" class="error-msg"></div>
+    </div>
+  </div>
+
+  <div id="archivedBanner" class="switch-banner" style="display:none; background:#4a3a1e; color:#ffd479;">
+    This tournament is archived (read-only). Results are preserved but cannot be edited.
+  </div>
+
   <div id="dayTabs" style="margin-bottom: 14px;">
-    <button onclick="renderDay(1)" id="dayBtn1">Day 1 - July 18</button>
-    <button class="secondary" onclick="renderDay(2)" id="dayBtn2">Day 2 - July 19</button>
+    <button onclick="renderDay(1)" id="dayBtn1">Day 1</button>
+    <button class="secondary" onclick="renderDay(2)" id="dayBtn2">Day 2</button>
   </div>
 
   <div id="matchList"></div>
@@ -27,6 +66,8 @@ let currentDay = 1;
 let isAdmin = false;
 let setupComplete = true;
 let bracket = [];
+let tournaments = [];
+let currentTournamentId = null;
 
 function roundIsDay1(round) {
   return ['Play-In', 'Round of 16'].includes(round);
@@ -64,6 +105,8 @@ function renderAuthArea() {
       <span class="small-note">Admin session active</span>
       <button class="secondary" onclick="doLogout()">Logout</button>
     `;
+    document.getElementById('newTournamentBtn').style.display = 'inline-block';
+    document.getElementById('importBtn').style.display = 'inline-block';
     return;
   }
 
@@ -102,8 +145,95 @@ async function doLogout() {
   renderAuthArea();
 }
 
+// ---- Tournaments ----
+
+function toggleNewTournamentForm() {
+  const form = document.getElementById('newTournamentForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+async function exportTournament() {
+  if (!currentTournamentId) return;
+  try {
+    const bundle = await Api.get(`/api/tournaments/${currentTournamentId}/export`);
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const t = tournaments.find(x => x._id === currentTournamentId);
+    const safeName = (t ? t.name : 'tournament').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeName}-export.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    document.getElementById('importMsg').textContent = 'Export failed: ' + e.message;
+  }
+}
+
+async function importTournament(event) {
+  const file = event.target.files[0];
+  event.target.value = ''; // reset so selecting the same file again still fires onchange
+  if (!file) return;
+  const msg = document.getElementById('importMsg');
+  try {
+    const text = await file.text();
+    const bundle = JSON.parse(text);
+    const res = await Api.post('/api/tournaments/import', bundle);
+    msg.textContent = `Imported "${res.tournament.name}" with ${res.importedMatches} match(es).`;
+    await loadTournaments();
+    currentTournamentId = res.tournament._id;
+    document.getElementById('tournamentSelect').value = currentTournamentId;
+    await loadBracket();
+  } catch (e) {
+    msg.textContent = 'Import failed: ' + e.message;
+  }
+}
+
+async function createTournament() {
+  const name = document.getElementById('newTournamentName').value;
+  const eventDates = document.getElementById('newTournamentDates').value;
+  const setFormat = document.getElementById('newTournamentSetFormat').value;
+  const decidingSet = document.getElementById('newTournamentDecidingSet').value;
+  try {
+    const res = await Api.post('/api/tournaments', { name, eventDates, setFormat, decidingSet });
+    toggleNewTournamentForm();
+    await loadTournaments();
+    currentTournamentId = res.tournament._id;
+    document.getElementById('tournamentSelect').value = currentTournamentId;
+    await loadBracket();
+  } catch (e) {
+    document.getElementById('newTournamentError').textContent = e.message;
+  }
+}
+
+async function loadTournaments() {
+  tournaments = await Api.get('/api/tournaments');
+  const sel = document.getElementById('tournamentSelect');
+  sel.innerHTML = tournaments.map(t => `<option value="${t._id}">${t.name}${t.status === 'archived' ? ' (archived)' : ''}</option>`).join('');
+  if (!currentTournamentId) {
+    const active = tournaments.find(t => t.status === 'active');
+    currentTournamentId = active ? active._id : (tournaments[0] && tournaments[0]._id);
+  }
+  if (currentTournamentId) sel.value = currentTournamentId;
+}
+
+function onTournamentChange() {
+  currentTournamentId = document.getElementById('tournamentSelect').value;
+  loadBracket();
+}
+
+function updateArchivedBanner() {
+  const t = tournaments.find(x => x._id === currentTournamentId);
+  document.getElementById('archivedBanner').style.display = (t && t.status === 'archived') ? 'block' : 'none';
+  document.getElementById('rankingsLink').href = `/rankings.html?t=${currentTournamentId}`;
+}
+
 async function loadBracket() {
-  bracket = await Api.get('/api/bracket');
+  if (!currentTournamentId) { document.getElementById('matchList').innerHTML = '<p class="small-note">No tournaments yet.</p>'; return; }
+  updateArchivedBanner();
+  bracket = await Api.get(`/api/tournaments/${currentTournamentId}/bracket`);
   renderDay(currentDay);
 }
 
@@ -117,7 +247,7 @@ function renderDay(day) {
   list.innerHTML = matches.map(m => {
     const winnerName = m.status === 'completed' && m.score && m.score.winner ? m[m.score.winner].name : null;
     return `
-    <div class="match-card" onclick="location.href='/match.html?m=${m.matchNumber}'">
+    <div class="match-card" onclick="location.href='/match.html?t=${currentTournamentId}&m=${m.matchNumber}'">
       <div>
         <div class="match-meta">Match ${m.matchNumber} - ${m.round} - ${m.session} - ${m.scheduledStart} to ${m.scheduledEnd}</div>
         <div class="match-players">${m.player1.name} vs ${m.player2.name}</div>
@@ -126,13 +256,14 @@ function renderDay(day) {
       <span class="badge ${m.status}">${m.status.replace('_',' ')}</span>
     </div>
   `;
-  }).join('') || '<p class="small-note">No matches yet - run the seed script.</p>';
+  }).join('') || '<p class="small-note">No matches yet.</p>';
 }
 
 (async function init() {
   await checkAuth();
   await checkSetup();
   renderAuthArea();
+  await loadTournaments();
   await loadBracket();
 })();
 </script>

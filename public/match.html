@@ -9,12 +9,16 @@
 <body>
 <header>
   <div style="display:flex; align-items:center; gap:12px;">
-    <button class="secondary" onclick="location.href='/'">&larr; Back</button>
+    <button class="secondary" onclick="goBack()">&larr; Back</button>
     <h1><a href="/" style="color:#e9f0ea;text-decoration:none;">🏆 AO Tournament</a> / Match <span id="mNum"></span></h1>
   </div>
   <div id="authArea"></div>
 </header>
 <main>
+
+  <div id="archivedBanner" class="switch-banner" style="display:none; background:#4a3a1e; color:#ffd479;">
+    This tournament is archived (read-only). Results are preserved but cannot be edited.
+  </div>
 
   <div id="lockNotice" class="error-msg"></div>
 
@@ -28,6 +32,11 @@
     <div class="session-title">Coin toss</div>
     <div id="tossView"></div>
     <div id="tossForm" style="display:none;"></div>
+  </div>
+
+  <div class="session-block" id="timerBlock" style="display:none;">
+    <div class="session-title">Match timer</div>
+    <div id="timerDisplay" class="small-note"></div>
   </div>
 
   <div id="switchBanner" class="switch-banner" style="display:none;"></div>
